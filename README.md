@@ -1,4 +1,5 @@
-### Struttura del progetto
+![Screenshot](screenshot.png)
+
 per creare l'eseguibile: pyinstaller main.spec 
 
 ```text
