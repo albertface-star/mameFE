@@ -1,4 +1,5 @@
 ### Struttura del progetto
+per creare l'eseguibile: pyinstaller main.spec 
 
 ```text
 MAME_Frontend_Root/
