@@ -21,10 +21,7 @@ MAME_Frontend_Root/
 |
 ├── hiscore/
 ├── ini/
-|
-├── game_list.json
-├── play_counts.json
-└── lists.json
+
 
 A modern, lightweight, and PyQt6-based graphical frontend for MAME. It provides a clean user interface
 to manage, search, and launch your ROMs, featuring play count tracking, custom lists, and snapshot previews.
