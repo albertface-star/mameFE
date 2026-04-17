@@ -1,25 +1,29 @@
+### Struttura del progetto
+
+```text
 MAME_Frontend_Root/
-│
-├── mame.exe                # (Required) The MAME emulator executable
-├── mame_frontend.py        # (Required) This Python script
-│
-├── roms/                   # (Required) Place your .zip / .7z ROMs here
-│   ├── game1.zip
-│   └── game2.zip
-│
-├── snap/                   # (Optional) Game screenshots (png)
-│   ├── game1.png
-│   └── game2.png
-│
-├── icons/                  # (Optional) Game icons (ico/png)
-│   └── game1.ico
-│
-├── hiscore/                # (Auto-created) High score data
-├── ini/                    # (Auto-created) Game configuration & Autosave states
-│
-├── game_list.json          # (Auto-created) ROM database
-├── play_counts.json        # (Auto-created) Statistics
-└── lists.json              # (Auto-created) Custom lists
+|
+├── mame.exe
+├── mame_frontend.py
+|
+├── roms/
+| ├── game1.zip
+| └── game2.zip
+|
+├── snap/
+| ├── game1.png
+| └── game2.png
+|
+├── icons/
+| └── game1.ico
+|
+├── hiscore/
+├── ini/
+|
+├── game_list.json
+├── play_counts.json
+└── lists.json
+
 A modern, lightweight, and PyQt6-based graphical frontend for MAME. It provides a clean user interface to manage, search, and launch your ROMs, featuring play count tracking, custom lists, and snapshot previews.
 
 Python MAME Frontend ScreenshotPyQt6License
