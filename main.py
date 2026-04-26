@@ -11,8 +11,10 @@ import subprocess
 import sys
 import time
 import xml.etree.ElementTree as ET
-from collections import Counter
+from collections import Counter, OrderedDict
 from pathlib import Path
+from functools import lru_cache
+import threading
 
 from PIL import Image
 
@@ -84,11 +86,25 @@ print(f"MAME:  {MAME_EXE}\nROMs:  {ROMPATH}\nSnap:  {SNAP_FOLDER}\n"
       f"Hi:    {HI_FOLDER}\nIni:   {INI_FOLDER}\nArt:   {ARTWORK_FOLDER}\nIcons: {ICON_FOLDER}\n")
 
 # --- Utilità immagini ---
+@lru_cache(maxsize=500)
+def _pil_to_pixmap_cached(img_bytes: bytes, width: int, height: int) -> QPixmap:
+    """Versione cached di _pil_to_pixmap che lavora su bytes per essere hashabile."""
+    from io import BytesIO
+    img = Image.open(BytesIO(img_bytes)).convert("RGBA")
+    data = img.tobytes("raw", "RGBA")
+    qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
+    return QPixmap.fromImage(qimg)
+
 def _pil_to_pixmap(img: Image.Image) -> QPixmap:
     img = img.convert("RGBA")
     data = img.tobytes("raw", "RGBA")
     qimg = QImage(data, img.width, img.height, QImage.Format.Format_RGBA8888)
     return QPixmap.fromImage(qimg)
+
+# Cache per le immagini snap e icone
+_snap_cache = {}
+_icon_cache = {}
+_image_cache_lock = threading.Lock()
 
 # --- Utilità JSON ---
 def _leggi_json(path: Path, default):
@@ -273,31 +289,56 @@ def scrivi_autosave_state(rom_name, stato):
         print(f"Errore scrittura ini per {rom_name}: {e}")
 
 def load_snap_pixmap(rom_name):
+    """Carica la snap image con caching per migliorare le prestazioni."""
+    # Controlla prima la cache in memoria
+    if rom_name in _snap_cache:
+        return _snap_cache[rom_name]
+    
     snap_path = SNAP_FOLDER / f"{rom_name}.png"
     if not snap_path.exists():
+        _snap_cache[rom_name] = None
         return None
+    
     try:
-        img = Image.open(snap_path).convert("RGBA")
-        orig_w, orig_h = img.size
-        if orig_w == 0 or orig_h == 0:
-            return None
-        ratio = min(MAX_PREVIEW_W / orig_w, MAX_PREVIEW_H / orig_h)
-        new_w, new_h = max(1, int(orig_w * ratio)), max(1, int(orig_h * ratio))
-        img = img.resize((new_w, new_h), Image.LANCZOS)
-        canvas = Image.new("RGBA", (MAX_PREVIEW_W, MAX_PREVIEW_H), (0, 0, 0, 0))
-        canvas.paste(img, ((MAX_PREVIEW_W - new_w) // 2, (MAX_PREVIEW_H - new_h) // 2))
-        return _pil_to_pixmap(canvas)
+        with _image_cache_lock:
+            img = Image.open(snap_path).convert("RGBA")
+            orig_w, orig_h = img.size
+            if orig_w == 0 or orig_h == 0:
+                _snap_cache[rom_name] = None
+                return None
+            ratio = min(MAX_PREVIEW_W / orig_w, MAX_PREVIEW_H / orig_h)
+            new_w, new_h = max(1, int(orig_w * ratio)), max(1, int(orig_h * ratio))
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            canvas = Image.new("RGBA", (MAX_PREVIEW_W, MAX_PREVIEW_H), (0, 0, 0, 0))
+            canvas.paste(img, ((MAX_PREVIEW_W - new_w) // 2, (MAX_PREVIEW_H - new_h) // 2))
+            pixmap = _pil_to_pixmap(canvas)
+            _snap_cache[rom_name] = pixmap
+            return pixmap
     except Exception as e:
         print(f"Errore snap '{rom_name}': {e}")
+        _snap_cache[rom_name] = None
         return None
 
 def load_icon_pixmap(ico_path):
+    """Carica l'icona con caching per migliorare le prestazioni."""
+    # Usa il percorso come chiave di cache
+    path_str = str(ico_path)
+    if path_str in _icon_cache:
+        return _icon_cache[path_str]
+    
     try:
-        return _pil_to_pixmap(Image.open(ico_path).resize((32, 32), Image.LANCZOS))
+        with _image_cache_lock:
+            pixmap = _pil_to_pixmap(Image.open(ico_path).resize((32, 32), Image.LANCZOS))
+            _icon_cache[path_str] = pixmap
+            return pixmap
     except Exception:
+        _icon_cache[path_str] = None
         return None
 
-icon_pixmaps = {}
+# Cache per le immagini snap e icone
+_snap_cache = {}
+_icon_cache = {}
+_image_cache_lock = threading.Lock()
 
 COL_ICON  = 0
 COL_NOME  = 1
@@ -336,7 +377,7 @@ class GameTableModel(QAbstractListModel):
             case Qt.ItemDataRole.DisplayRole: return g["description"]
             case self.RomRole:    return g["name"]
             case self.CountRole:  return play_counts.get(g["name"], 0)
-            case self.IconRole:   return icon_pixmaps.get(g["name"])
+            case self.IconRole:   return _icon_cache.get(str(ICON_FOLDER / f"{g['name']}.ico"))
             case self.YearRole:   return g.get("year", "????")
             case self.GameRole:   return g
             case self.StatusRole: return g.get("status", "good")
@@ -383,13 +424,16 @@ class GameDelegate(QStyledItemDelegate):
         x, y, h = r.x(), r.y(), r.height()
 
         rom_name = index.data(GameTableModel.RomRole)
-        icon_px = icon_pixmaps.get(rom_name)
-        if icon_px is None and rom_name not in icon_pixmaps:
+        ico_path_str = str(ICON_FOLDER / f"{rom_name}.ico")
+        icon_px = _icon_cache.get(ico_path_str)
+        
+        # Carica l'icona solo se non è in cache e il file esiste
+        if icon_px is None and ico_path_str not in _icon_cache:
             if ICON_FOLDER.exists():
                 ico_path = ICON_FOLDER / f"{rom_name}.ico"
                 if ico_path.exists():
                     icon_px = load_icon_pixmap(ico_path)
-            icon_pixmaps[rom_name] = icon_px
+        
         if icon_px:
             painter.drawPixmap(x + 4, y + (h - 32) // 2, icon_px)
         x += self.COL_ICON
@@ -555,9 +599,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, self.list_view.setFocus)
 
     def _on_startup_loaded(self, giochi):
-        global games, icon_pixmaps
+        global games
         games = giochi
-        icon_pixmaps = {}
+        # Pulisce le cache delle immagini quando si ricarica la lista
+        _snap_cache.clear()
+        _icon_cache.clear()
         self.search_input.setEnabled(True)
         self.combo_liste.setEnabled(True)
         self.btn_refresh.setEnabled(True)
@@ -1009,7 +1055,9 @@ class MainWindow(QMainWindow):
         if GAME_LIST_BACKUP.exists():
             GAME_LIST_BACKUP.unlink()
         games = new_games
-        icon_pixmaps.clear()
+        # Pulisce le cache delle immagini durante il refresh
+        _snap_cache.clear()
+        _icon_cache.clear()
         self._is_refreshing = False
         self.btn_refresh.setText("Refresh")
         for w in (self.btn_refresh, self.search_input, self.combo_liste):
